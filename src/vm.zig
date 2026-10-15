@@ -9,17 +9,12 @@ pub const InterpretError = error{
 };
 
 pub const VM = struct {
-    chunks: std.ArrayList(chunk) = .empty,
+    chunks: std.ArrayList(chunk.Chunk) = .empty,
     ip: usize = 0,
 
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) VM {
-        return .{ .allocator = allocator };
-    }
-
-    pub fn deinit(self: *VM) void {
-        self.allocator.free(self.chunks);
+    pub fn deinit(self: *VM, gpa: std.mem.Allocator) void {
+        for (self.chunks.items) |*c| c.deinit(gpa);
+        self.chunks.deinit(gpa);
         self.* = undefined;
     }
 };
