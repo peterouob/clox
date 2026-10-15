@@ -81,3 +81,16 @@ fn simpleIns(name: []const u8, offset: usize) usize {
     print("{s}\n", .{name});
     return offset + 1;
 }
+
+test "chunk grows past init capacity without leaking" {
+    const gpa = std.testing.allocator;
+    var chunk = Chunk.init(gpa);
+    defer chunk.deinit();
+
+    for (0..100) |i| try chunk.writeChunk(@intCast(i), @intCast(i));
+    const idx = try chunk.addConstant(1.5);
+
+    try std.testing.expectEqual(100, chunk.code.items.len);
+    try std.testing.expectEqual(99, chunk.lines.items[99]);
+    try std.testing.expectEqual(1.5, chunk.constants.items[idx]);
+}
