@@ -1,68 +1,83 @@
 const std = @import("std");
-const mem = @import("mem.zig");
+const print = std.debug.print;
 
 pub const Opcode = enum(u8) {
+    OP_CONSTANT,
     OP_RETURN,
     _,
 };
 
+const Value = f64;
+
 pub const Chunk = struct {
-    count: usize = 0,
-    code: []u8 = &.{},
+    code: std.ArrayList(u8) = .empty,
+    lines: std.ArrayList(u32) = .empty,
+    constants: std.ArrayList(Value) = .empty,
+
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Chunk {
         return .{ .allocator = allocator };
     }
 
-    pub fn writeChunk(self: *Chunk, byte: u8) !void {
-        if (self.count == self.code.len) {
-            const new_capacity: usize = mem.growCapacity(self.code.len);
-            self.code = try mem.growArray(u8, self.allocator, self.code, new_capacity);
-        }
-        self.code[self.count] = byte;
-        self.count += 1;
+    pub fn writeChunk(self: *Chunk, byte: u8, line: u32) !void {
+        try self.code.append(self.allocator, byte);
+        try self.lines.append(self.allocator, line);
     }
 
     pub fn deinit(self: *Chunk) void {
-        mem.freeArray(u8, self.allocator, self.code);
+        self.code.deinit(self.allocator);
+        self.lines.deinit(self.allocator);
+        self.constants.deinit(self.allocator);
         self.* = undefined;
-    }
-
-    pub fn freeChunk(self: *Chunk) void {
-        mem.freeArray(u8, self.allocator, self.code);
-        self.* = init(self.allocator);
-    }
-
-    pub fn print(self: *Chunk) void {
-        std.debug.print("count {d}, codes {s}", .{ self.count, self.code });
     }
 
     pub fn disassembleChunk(
         self: *const Chunk,
         name: []const u8,
     ) void {
-        std.debug.print("=== {s} === \n", .{name});
+        print("=== {s} === \n", .{name});
 
         var offset: usize = 0;
-        while (offset < self.count) {
-            offset = self.disassembleIns(offset, name);
+        while (offset < self.code.items.len) {
+            offset = self.disassembleIns(offset);
         }
     }
 
-    pub fn disassembleIns(self: *const Chunk, offset: usize, name: []const u8) usize {
-        const instruction = self.code[offset];
+    pub fn disassembleIns(self: *const Chunk, offset: usize) usize {
+        const lines = self.lines.items;
+
+        print("{d:0>4} ", .{offset});
+        if (offset > 0 and lines[offset] == lines[offset - 1])
+            print("   | ", .{})
+        else
+            print("{d:>4} ", .{lines[offset]});
+
+        const instruction = self.code.items[offset];
         switch (@as(Opcode, @fromBackingInt(instruction))) {
-            .OP_RETURN => return simpleIns(name, offset),
+            .OP_RETURN => return simpleIns("OP_RETURN", offset),
+            .OP_CONSTANT => return self.constantIns("OP_CONSTANT", offset),
             _ => {
-                std.debug.print("unknown op code {d}\n", .{instruction});
+                print("unknown op code {d}\n", .{instruction});
                 return offset + 1;
             },
         }
     }
+
+    pub fn addConstant(self: *Chunk, value: Value) !usize {
+        try self.constants.append(self.allocator, value);
+        return self.constants.items.len - 1;
+    }
+
+    pub fn constantIns(self: *const Chunk, name: []const u8, offset: usize) usize {
+        const constant: usize = self.code.items[offset + 1];
+        const value = self.constants.items[constant];
+        print("{s:<16} {d:>4} '{d}'\n", .{ name, constant, value });
+        return offset + 2;
+    }
 };
 
 fn simpleIns(name: []const u8, offset: usize) usize {
-    std.debug.print("{s} \n", .{name});
+    print("{s}\n", .{name});
     return offset + 1;
 }
