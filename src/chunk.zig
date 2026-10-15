@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = @import("mem.zig");
 
 pub const Opcode = enum { OP_RETURN };
 
@@ -13,15 +14,15 @@ pub const Chunk = struct {
 
     pub fn writeChunk(self: *Chunk, byte: u8) !void {
         if (self.count == self.code.len) {
-            const new_capacity: usize = growCapacity(self.code.len);
-            self.code = try self.allocator.realloc(self.code, new_capacity);
+            const new_capacity: usize = mem.growCapacity(self.code.len);
+            self.code = try mem.growArray(u8, self.allocator, self.code, new_capacity);
         }
         self.code[self.count] = byte;
         self.count += 1;
     }
 
     pub fn deinit(self: *Chunk) void {
-        self.allocator.free(self.code);
+        mem.freeArray(u8, self.allocator, self.code);
         self.* = undefined;
     }
 
@@ -29,7 +30,3 @@ pub const Chunk = struct {
         std.debug.print("count {d}, codes {s}", .{ self.count, self.code });
     }
 };
-
-inline fn growCapacity(capacity: usize) usize {
-    return if (capacity < 8) 8 else capacity * 2;
-}

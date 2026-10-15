@@ -9,6 +9,9 @@ pub fn main(init: std.process.Init) !void {
 
     defer chunk.deinit();
 
-    try chunk.writeChunk('H');
+    for (0..10) |_| {
+        try chunk.writeChunk('H');
+    }
+
     chunk.print();
 }
