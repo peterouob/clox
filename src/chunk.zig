@@ -3,15 +3,25 @@ const print = std.debug.print;
 
 pub const Opcode = enum(u8) {
     OP_CONSTANT,
+    OP_CONSTANT_LONG,
     OP_RETURN,
     _,
 };
+
+const LineStart = struct {
+    line: u32,
+    offset: usize,
+};
+
+const ChunkError = error{
+    TooBigOverflow,
+} || std.mem.Allocator.Error;
 
 const Value = f64;
 
 pub const Chunk = struct {
     code: std.ArrayList(u8) = .empty,
-    lines: std.ArrayList(u32) = .empty,
+    lines: std.ArrayList(LineStart) = .empty,
     constants: std.ArrayList(Value) = .empty,
 
     allocator: std.mem.Allocator,
@@ -20,9 +30,42 @@ pub const Chunk = struct {
         return .{ .allocator = allocator };
     }
 
-    pub fn writeChunk(self: *Chunk, byte: u8, line: u32) !void {
+    pub fn writeChunk(self: *Chunk, byte: u8, line: u32) ChunkError!void {
+        const offset = self.code.items.len;
         try self.code.append(self.allocator, byte);
-        try self.lines.append(self.allocator, line);
+
+        const lines = self.lines.items;
+        if (lines.len > 0 and lines[lines.len - 1].line == line) return;
+
+        try self.lines.append(self.allocator, .{ .line = line, .offset = offset });
+    }
+
+    pub fn writeConstant(self: *Chunk, value: Value, line: u32) ChunkError!void {
+        if (self.constants.items.len > std.math.maxInt(u24)) return ChunkError.TooBigOverflow;
+        const idx = try self.addConstant(value);
+
+        if (idx <= std.math.maxInt(u8)) {
+            try self.writeChunk(@backingInt(Opcode.OP_CONSTANT), line);
+            try self.writeChunk(@intCast(idx), line);
+        } else {
+            try self.writeChunk(@backingInt(Opcode.OP_CONSTANT_LONG), line);
+            var buf: [3]u8 = undefined;
+            std.mem.writeInt(u24, &buf, @intCast(idx), .little);
+            for (buf) |b| try self.writeChunk(b, line);
+        }
+    }
+
+    pub fn getLine(self: *const Chunk, offset: usize) u32 {
+        std.debug.assert(offset < self.code.items.len);
+
+        const lines = self.lines.items;
+        const idx = std.sort.partitionPoint(LineStart, lines, offset, struct {
+            fn pred(target: usize, l: LineStart) bool {
+                return l.offset <= target;
+            }
+        }.pred);
+
+        return lines[idx - 1].line;
     }
 
     pub fn deinit(self: *Chunk) void {
@@ -45,18 +88,19 @@ pub const Chunk = struct {
     }
 
     pub fn disassembleIns(self: *const Chunk, offset: usize) usize {
-        const lines = self.lines.items;
-
         print("{d:0>4} ", .{offset});
-        if (offset > 0 and lines[offset] == lines[offset - 1])
+        const line = self.getLine(offset);
+
+        if (offset > 0 and line == self.getLine(offset - 1))
             print("   | ", .{})
         else
-            print("{d:>4} ", .{lines[offset]});
+            print("{d:>4} ", .{line});
 
         const instruction = self.code.items[offset];
         switch (@as(Opcode, @fromBackingInt(instruction))) {
             .OP_RETURN => return simpleIns("OP_RETURN", offset),
             .OP_CONSTANT => return self.constantIns("OP_CONSTANT", offset),
+            .OP_CONSTANT_LONG => return self.constantLongIns("OP_CONSTANT_LONG", offset),
             _ => {
                 print("unknown op code {d}\n", .{instruction});
                 return offset + 1;
@@ -75,6 +119,13 @@ pub const Chunk = struct {
         print("{s:<16} {d:>4} '{d}'\n", .{ name, constant, value });
         return offset + 2;
     }
+
+    pub fn constantLongIns(self: *const Chunk, name: []const u8, offset: usize) usize {
+        const code = self.code.items;
+        const constant = std.mem.readInt(u24, code[offset + 1][0..3], .little);
+        print("{s:<16} {d:>4}\n", .{ name, constant });
+        return offset + 4;
+    }
 };
 
 fn simpleIns(name: []const u8, offset: usize) usize {
@@ -91,6 +142,56 @@ test "chunk grows past init capacity without leaking" {
     const idx = try chunk.addConstant(1.5);
 
     try std.testing.expectEqual(100, chunk.code.items.len);
-    try std.testing.expectEqual(99, chunk.lines.items[99]);
+    try std.testing.expectEqual(99, chunk.getLine(99));
     try std.testing.expectEqual(1.5, chunk.constants.items[idx]);
+}
+
+test "same line instructions are run-length encoded" {
+    const gpa = std.testing.allocator;
+    var chunk = Chunk.init(gpa);
+    defer chunk.deinit();
+
+    try chunk.writeChunk(0, 10);
+    try chunk.writeChunk(1, 10);
+    try chunk.writeChunk(2, 10);
+    try chunk.writeChunk(3, 11);
+    try chunk.writeChunk(4, 11);
+
+    try std.testing.expectEqual(2, chunk.lines.items.len);
+    try std.testing.expectEqual(10, chunk.getLine(0));
+    try std.testing.expectEqual(10, chunk.getLine(2));
+    try std.testing.expectEqual(11, chunk.getLine(3));
+    try std.testing.expectEqual(11, chunk.getLine(4));
+}
+
+test "write constant switch after bigger than 256 constant" {
+    const gpa = std.testing.allocator;
+    var chunk = Chunk.init(gpa);
+    defer chunk.deinit();
+
+    for (0..256) |i| try chunk.writeConstant(@floatFromInt(i), 1);
+
+    const code = chunk.code.items;
+    try std.testing.expectEqual(512, code.len);
+    try std.testing.expectEqual(@backingInt(Opcode.OP_CONSTANT), code[510]);
+    try std.testing.expectEqual(255, code[511]);
+
+    try chunk.writeConstant(256.0, 2);
+    const code_ = chunk.code.items;
+
+    try std.testing.expectEqual(516, code_.len);
+    try std.testing.expectEqual(@backingInt(Opcode.OP_CONSTANT_LONG), code_[512]);
+    try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x01, 0x00 }, code_[513..516]);
+}
+
+test "too big id error handle" {
+    const gpa = std.testing.allocator;
+    var chunk = Chunk.init(gpa);
+    defer chunk.deinit();
+
+    try chunk.constants.appendNTimes(gpa, 0, std.math.maxInt(u24) + 1);
+    const before_len = chunk.code.items.len;
+    try std.testing.expectError(ChunkError.TooBigOverflow, chunk.writeConstant(1.0, 1));
+    try std.testing.expectEqual(before_len, chunk.code.items.len);
+    try std.testing.expectEqual(@as(usize, std.math.maxInt(u24) + 1), chunk.constants.items.len);
 }
