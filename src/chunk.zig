@@ -5,6 +5,7 @@ pub const Opcode = enum(u8) {
     OP_CONSTANT,
     OP_CONSTANT_LONG,
     OP_RETURN,
+    _,
 };
 
 const LineStart = struct {
