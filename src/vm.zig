@@ -31,6 +31,7 @@ pub const VM = struct {
                 },
                 .OP_CONSTANT => self.stack.push(self.readConstant()),
                 .OP_CONSTANT_LONG => self.stack.push(self.readConstantLong()),
+                .OP_NEGATE => self.stack.push(-self.stack.pop()),
                 _ => return InterpretError.INTERPRET_RUNTIME_ERROR,
             }
         }

@@ -5,6 +5,7 @@ pub const Opcode = enum(u8) {
     OP_CONSTANT,
     OP_CONSTANT_LONG,
     OP_RETURN,
+    OP_NEGATE,
     _,
 };
 
@@ -95,6 +96,7 @@ pub const Chunk = struct {
             .OP_RETURN => return simpleIns("OP_RETURN", offset),
             .OP_CONSTANT => return self.constantIns("OP_CONSTANT", offset),
             .OP_CONSTANT_LONG => return self.constantLongIns("OP_CONSTANT_LONG", offset),
+            .OP_NEGATE => return simpleIns("OP_NEGATE", offset),
             _ => {
                 print("unknown op code {d}\n", .{instruction});
                 return offset + 1;

@@ -13,7 +13,11 @@ pub fn main(init: std.process.Init) !void {
     const constant: usize = try chunk.addConstant(gpa, 123);
     try chunk.writeChunk(gpa, @backingInt(opcode.OP_CONSTANT), 123);
     try chunk.writeChunk(gpa, @intCast(constant), 123);
+    try chunk.writeChunk(gpa, @backingInt(opcode.OP_NEGATE), 123);
     try chunk.writeChunk(gpa, @backingInt(opcode.OP_RETURN), 123);
 
     chunk.disassembleChunk("OP_RETURN");
+
+    var vm: clox.vm.VM = .{ .chunk = &chunk };
+    _ = try vm.run();
 }
