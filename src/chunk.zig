@@ -16,7 +16,7 @@ const ChunkError = error{
     TooBigOverflow,
 } || std.mem.Allocator.Error;
 
-const Value = f64;
+pub const Value = f64;
 
 pub const Chunk = struct {
     code: std.ArrayList(u8) = .empty,
