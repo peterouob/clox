@@ -6,6 +6,10 @@ pub const Opcode = enum(u8) {
     OP_CONSTANT_LONG,
     OP_RETURN,
     OP_NEGATE,
+    OP_BINARY_ADD,
+    OP_BINARY_SUB,
+    OP_BINARY_MUL,
+    OP_BINARY_DIV,
     _,
 };
 
@@ -97,6 +101,10 @@ pub const Chunk = struct {
             .OP_CONSTANT => return self.constantIns("OP_CONSTANT", offset),
             .OP_CONSTANT_LONG => return self.constantLongIns("OP_CONSTANT_LONG", offset),
             .OP_NEGATE => return simpleIns("OP_NEGATE", offset),
+            .OP_ADD => return simpleIns("OP_ADD", offset),
+            .OP_SUB => return simpleIns("OP_SUB", offset),
+            .OP_MUL => return simpleIns("OP_MUL", offset),
+            .OP_DIV => return simpleIns("OP_DIV", offset),
             _ => {
                 print("unknown op code {d}\n", .{instruction});
                 return offset + 1;
