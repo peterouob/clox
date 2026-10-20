@@ -14,7 +14,7 @@ pub const InterpretResult = enum(u8) {
 pub const InterpretError = error{
     INTERPRET_COMPILE_ERROR,
     INTERPRET_RUNTIME_ERROR,
-} || StackError;
+};
 
 const BinaryOP = enum(u8) {
     ADD,
@@ -28,7 +28,12 @@ pub const VM = struct {
     ip: usize = 0,
     stack: Stack = .{},
 
-    pub fn run(self: *VM) InterpretError!InterpretResult {
+    pub fn deinit(self: *VM, gpa: std.mem.Allocator) void {
+        self.stack.deinit(gpa);
+        self.* = undefined;
+    }
+
+    pub fn run(self: *VM, gpa: std.mem.Allocator) !InterpretResult {
         while (true) {
             const ins: opcode = @fromBackingInt(self.readByte());
             switch (ins) {
@@ -36,13 +41,13 @@ pub const VM = struct {
                     print("{d}\n", .{self.stack.pop()});
                     return .INTERPRET_OK;
                 },
-                .OP_CONSTANT => try self.stack.push(self.readConstant()),
-                .OP_CONSTANT_LONG => try self.stack.push(self.readConstantLong()),
-                .OP_NEGATE => try self.stack.push(-self.stack.pop()),
-                .OP_BINARY_ADD => try self.binaryOp(.ADD),
-                .OP_BINARY_SUB => try self.binaryOp(.SUB),
-                .OP_BINARY_MUL => try self.binaryOp(.MUL),
-                .OP_BINARY_DIV => try self.binaryOp(.DIV),
+                .OP_CONSTANT => try self.stack.push(self.readConstant(), gpa),
+                .OP_CONSTANT_LONG => try self.stack.push(self.readConstantLong(), gpa),
+                .OP_NEGATE => try self.stack.push(-self.stack.pop(), gpa),
+                .OP_BINARY_ADD => try self.binaryOp(.ADD, gpa),
+                .OP_BINARY_SUB => try self.binaryOp(.SUB, gpa),
+                .OP_BINARY_MUL => try self.binaryOp(.MUL, gpa),
+                .OP_BINARY_DIV => try self.binaryOp(.DIV, gpa),
                 _ => return InterpretError.INTERPRET_RUNTIME_ERROR,
             }
         }
@@ -63,7 +68,7 @@ pub const VM = struct {
         return self.chunk.constants.items[idx];
     }
 
-    inline fn binaryOp(self: *VM, comptime op: BinaryOP) !void {
+    inline fn binaryOp(self: *VM, comptime op: BinaryOP, gpa: std.mem.Allocator) !void {
         const b = self.stack.pop();
         const a = self.stack.pop();
 
@@ -72,39 +77,37 @@ pub const VM = struct {
             .SUB => a - b,
             .MUL => a * b,
             .DIV => a / b, // this is valid e.g. IEEE754 handle div 0 on f64
-        });
+        }, gpa);
     }
 };
 
-const StackError = error{StacvkOverFlow};
-
 pub const Stack = struct {
-    stack: [MaxStack]Value = undefined,
-    stackTop: usize = 0,
+    stack: std.ArrayList(Value) = .empty,
 
-    pub fn push(self: *Stack, v: Value) StackError!void {
-        if (self.stackTop > MaxStack) {
-            return StackError.StacvkOverFlow;
-        }
-
-        self.stack[self.stackTop] = v;
-        self.stackTop += 1;
+    pub fn push(self: *Stack, v: Value, gpa: std.mem.Allocator) !void {
+        try self.stack.append(gpa, v);
     }
 
     pub fn pop(self: *Stack) Value {
-        self.stackTop -= 1;
-        return self.stack[self.stackTop];
+        return self.stack.pop().?;
+    }
+
+    pub fn deinit(self: *Stack, gpa: std.mem.Allocator) void {
+        self.stack.clearAndFree(gpa);
+        self.* = undefined;
     }
 };
 
 test "test the stack" {
+    const gpa = std.testing.allocator;
     var stack: Stack = .{};
-    try std.testing.expectEqual(0, stack.stackTop);
 
-    for (0..10) |i| try stack.push(@floatFromInt(i));
-    try std.testing.expectEqual(10, stack.stackTop);
+    defer stack.deinit(gpa);
+
+    for (0..10) |i| try stack.push(@floatFromInt(i), gpa);
+    try std.testing.expectEqual(10, stack.stack.items.len);
     try std.testing.expectEqual(9.0, stack.pop());
-    try std.testing.expectEqual(9, stack.stackTop);
+    try std.testing.expectEqual(9, stack.stack.items.len);
 }
 
 test "vm runs constant and long constant then returns" {
@@ -118,9 +121,12 @@ test "vm runs constant and long constant then returns" {
     try c.writeChunk(gpa, @backingInt(opcode.OP_RETURN), 1);
 
     var vm: VM = .{ .chunk = &c };
-    try std.testing.expectEqual(.INTERPRET_OK, try vm.run());
-    try std.testing.expectEqual(1, vm.stack.stackTop);
-    try std.testing.expectEqual(1.5, vm.stack.stack[0]);
+
+    defer vm.deinit(gpa);
+
+    try std.testing.expectEqual(.INTERPRET_OK, try vm.run(gpa));
+    try std.testing.expectEqual(1, vm.stack.stack.items.len);
+    try std.testing.expectEqual(1.5, vm.stack.stack.items[0]);
 }
 
 test "unknown opcode is a runtime error" {
@@ -130,7 +136,7 @@ test "unknown opcode is a runtime error" {
     try c.writeChunk(gpa, 0xff, 1);
 
     var vm: VM = .{ .chunk = &c };
-    try std.testing.expectError(InterpretError.INTERPRET_RUNTIME_ERROR, vm.run());
+    try std.testing.expectError(InterpretError.INTERPRET_RUNTIME_ERROR, vm.run(gpa));
 }
 
 test "vm binary operator" {
@@ -142,9 +148,9 @@ test "vm binary operator" {
             defer c.deinit(gpa);
 
             var vm: VM = .{ .chunk = &c };
-            try vm.stack.push(a);
-            try vm.stack.push(b);
-            try vm.binaryOp(op);
+            try vm.stack.push(a, gpa);
+            try vm.stack.push(b, gpa);
+            try vm.binaryOp(op, gpa);
 
             try std.testing.expectEqual(expected, vm.stack.pop());
         }
